@@ -8,7 +8,7 @@ usage:
 
 * `n`: number of local subvolumes to keep.
 * `/path/to/subvolume`: the path to the subvolume
-* [user@]host:/path/to/backup/location: the remote location to store the backups
+* `[user@]host:/path/to/backup/location`: the remote location to store the backups
 
 both local and remote locations must be on a btrfs filesystem, local must be a
 subvolume
