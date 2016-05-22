@@ -5,9 +5,15 @@ SUDO=sudo
 REMOTE_SUDO=sudo
 REMOTE_BTRFS=btrfs
 
+die() {
+	msg=$1; shift
+	printf "$msg\n" "$@"
+	exit 1
+}
+
 snapshotdir() {
 	local subvolume="$1"
-	printf "%s/%s\n" "$backupdir" "$(echo "$subvolume" | tr '/' '~')"
+	printf "%s/%s\n" "$backupdir" "$(printf "%s\n" "$subvolume" | tr '/' '~')"
 }
 
 snapshotname() {
@@ -48,7 +54,7 @@ transmit() {
 	local snap=
 	local base="$(basename "$snapshotdir")"
 
-	{ ls -1td $snapshotdir/* | grep -vFx "$current"; echo _; } | while read snap; do
+	{ ls -1td $snapshotdir/* | grep -vFx "$current"; printf "_\n"; } | while read snap; do
 		if [ $snap != '_' ]; then
 			parent="-p $snap"
 			printf "Using Parent %s\n" "$snap"
@@ -72,11 +78,11 @@ backup() {
 	local snapshotname="$(snapshotname "$subvolume")"
 	local dest="$2"
 	local cleanup="$3"
-	snapshot "$subvolume" "$snapshotname"
-	transmit "$snapshotname" "$dest"
+	snapshot "$subvolume" "$snapshotname" || die "snapshot failed"
+	transmit "$snapshotname" "$dest" || die "transmit failed"
 
 	if [ -n "$cleanup" ] && [ "$cleanup" -gt "0" ]; then
-		cleanup "$subvolume" "$cleanup"
+		cleanup "$subvolume" "$cleanup" || die "cleanup failed"
 	fi
 }
 
