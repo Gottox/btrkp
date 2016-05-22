@@ -1,0 +1,83 @@
+#!/bin/sh
+backupdir=/.backup
+BTRFS=btrfs
+SUDO=sudo
+REMOTE_SUDO=sudo
+REMOTE_BTRFS=btrfs
+
+snapshotdir() {
+	local subvolume="$1"
+	printf "%s/%s\n" "$backupdir" "$(echo "$subvolume" | tr '/' '~')"
+}
+
+snapshotname() {
+	local subvolume="$1"
+	local snapshotdir="$(snapshotdir "$1")"
+	local date=$(date "+%Y-%m-%d")
+	local suffix= basedir="${snapshotdir}/${date}"
+
+	if ls -d "${basedir}_"* > /dev/null 2>&1; then
+		suffix="_$(ls -dr "${basedir}_"* | head -n1 | cut -d_ -f2 | xargs expr 1 +)"
+	elif [ -e "${basedir}" ]; then
+		suffix=_1
+	fi
+	printf "%s%s\n" "$basedir" "$suffix"
+}
+
+snapshot() {
+	local subvolume="$1"
+	local snapshot="$2"
+	$SUDO mkdir -p $(dirname "$snapshot")
+	$SUDO $BTRFS subvolume snapshot -r "$subvolume" "$snapshot"
+}
+
+transmit_ssh() {
+	local dest="$1"
+	local base="$2"
+
+	local base64ed="$(printf "%s" "$RECEIVE_CMD")"
+	pv -c -W -D 10 -N raw | lzma --fast | pv -c -W -D 10	-N compressed | \
+		ssh "${dest%:*}" $REMOTE_SUDO mkdir -p "${dest#*:}/$base" ';' unlzma '|' \
+			$REMOTE_SUDO $REMOTE_BTRFS receive "${dest#*:}/$base"
+}
+
+transmit() {
+	local current="$1"
+	local dest="$2"
+	local snapshotdir=$(dirname "$current")
+	local snap=
+	local base="$(basename "$snapshotdir")"
+
+	{ ls -1td $snapshotdir/* | grep -vFx "$current"; echo _; } | while read snap; do
+		if [ $snap != '_' ]; then
+			parent="-p $snap"
+			printf "Using Parent %s\n" "$snap"
+		else
+			printf "FULL BACKUP\n"
+		fi
+		$SUDO $BTRFS send $parent "$current" | transmit_ssh "$dest" "${base}" && break
+		printf "\n\n\n";
+	done
+}
+
+cleanup () {
+	local subvolume="$1"
+	local snapshotdir="$(snapshotdir "$subvolume")"
+	local cleanup="$2"
+	ls -1trd $snapshotdir/* | head -n -$2 | $SUDO xargs -r -L1 $BTRFS subvolume delete
+}
+
+backup() {
+	local subvolume="$1"
+	local snapshotname="$(snapshotname "$subvolume")"
+	local dest="$2"
+	local cleanup="$3"
+	snapshot "$subvolume" "$snapshotname"
+	transmit "$snapshotname" "$dest"
+
+	if [ -n "$cleanup" ] && [ "$cleanup" -gt "0" ]; then
+		cleanup "$subvolume" "$cleanup"
+	fi
+}
+
+backup "$@"
