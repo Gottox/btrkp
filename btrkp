@@ -1,7 +1,8 @@
 #!/bin/sh
-backupdir=/.backup
-BTRFS=btrfs
+BACKUPDIR=/.backup
+
 SUDO=sudo
+BTRFS=btrfs
 REMOTE_SUDO=sudo
 REMOTE_BTRFS=btrfs
 
@@ -13,7 +14,7 @@ die() {
 
 snapshotdir() {
 	local subvolume="$1"
-	printf "%s/%s\n" "$backupdir" "$(printf "%s\n" "$subvolume" | tr '/' '~')"
+	printf "%s/%s\n" "$BACKUPDIR" "$(printf "%s\n" "$subvolume" | tr '/' '~')"
 }
 
 snapshotname() {
