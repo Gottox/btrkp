@@ -1,7 +1,7 @@
 btrkp
 =====
 
-Dead simple remote incremental backup solution written in Shell Script.
+/ˈbʌt.ɚ.kʌp/ - Dead simple remote incremental backup solution written in Shell Script.
 
 usage:
 	btrkp /path/to/subvolume [user@]host:/path/to/backup/location [n]
