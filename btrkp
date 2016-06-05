@@ -1,5 +1,5 @@
 #!/bin/sh
-BACKUPDIR=/.backup
+BACKUPDIR=.backup
 
 SUDO=sudo
 BTRFS=btrfs
@@ -14,7 +14,8 @@ die() {
 
 snapshotdir() {
 	local subvolume="$1"
-	printf "%s/%s\n" "$BACKUPDIR" "$(printf "%s\n" "$subvolume" | tr '/' '~')"
+	printf "%s/%s/%s\n" "$(findmnt -T $subvolume -no TARGET)" \
+		"$BACKUPDIR" "$(printf "%s\n" "$subvolume" | tr '/' '~')"
 }
 
 snapshotname() {
@@ -23,12 +24,18 @@ snapshotname() {
 	local date=$(date "+%Y-%m-%d")
 	local suffix= basedir="${snapshotdir}/${date}"
 
-	if ls -d "${basedir}_"* > /dev/null 2>&1; then
+	if ls -1d "${basedir}_"* > /dev/null 2>&1; then
 		suffix="_$(ls -dr "${basedir}_"* | head -n1 | cut -d_ -f2 | xargs expr 1 +)"
 	elif [ -e "${basedir}" ]; then
 		suffix=_1
 	fi
 	printf "%s%s\n" "$basedir" "$suffix"
+}
+
+progress() {
+	FORMAT="%N current %r avg %a %b"
+
+	pv -c -W -F "$FORMAT" "$@"
 }
 
 snapshot() {
@@ -38,14 +45,21 @@ snapshot() {
 	$SUDO $BTRFS subvolume snapshot -r "$subvolume" "$snapshot"
 }
 
-transmit_ssh() {
+via_ssh() {
 	local dest="$1"
 	local base="$2"
 
-	local base64ed="$(printf "%s" "$RECEIVE_CMD")"
-	pv -c -W -D 10 -N raw | lzma --fast | pv -c -W -D 10	-N compressed | \
+	progress -D 0 -N "raw" | lzma --fast | progress -D 0.5 -N "compressed" | \
 		ssh "${dest%:*}" $REMOTE_SUDO mkdir -p "${dest#*:}/$base" ';' unlzma '|' \
 			$REMOTE_SUDO $REMOTE_BTRFS receive "${dest#*:}/$base"
+}
+
+via_fs() {
+	local dest="$1"
+	local base="$2"
+
+	progress -D 0 -N "raw" | \
+		$SUDO $BTRFS receive "$dest/$base"
 }
 
 transmit() {
@@ -55,15 +69,19 @@ transmit() {
 	local snap=
 	local base="$(basename "$snapshotdir")"
 
-	{ ls -1td $snapshotdir/* | grep -vFx "$current"; printf "_\n"; } | while read snap; do
+	{ ls -1rd $snapshotdir/* | grep -vFx "$current"; printf "_\n"; } | while read snap; do
 		if [ $snap != '_' ]; then
 			parent="-p $snap"
 			printf "Using Parent %s\n" "$snap"
 		else
 			printf "FULL BACKUP\n"
 		fi
-		$SUDO $BTRFS send $parent "$current" | transmit_ssh "$dest" "${base}" && break
+		via=via_ssh
+		if [ "${dest#*:}" = "$dest" ]; then
+			via=via_fs
+		fi
 		printf "\n\n\n";
+		$SUDO $BTRFS send $parent "$current" | $via "$dest" "${base}" && break
 	done
 }
 
@@ -71,7 +89,7 @@ cleanup () {
 	local subvolume="$1"
 	local snapshotdir="$(snapshotdir "$subvolume")"
 	local cleanup="$2"
-	ls -1trd $snapshotdir/* | head -n -$2 | $SUDO xargs -r -L1 $BTRFS subvolume delete
+	ls -1d $snapshotdir/* | head -n -$2 | $SUDO xargs -r -L1 $BTRFS subvolume delete
 }
 
 backup() {
@@ -87,4 +105,29 @@ backup() {
 	fi
 }
 
+usage() {
+	cat <<EOF
+$0 - a dead simple backup tool. Usage:
+  $0 <(sub)volume> [user@]<host>:<remote destination>
+  $0 <(sub)volume> <local destination>
+EOF
+	exit 1;
+}
+
+if [ $# -eq 1 ]; then
+	oldifs=$IFS
+	IFS="
+"
+	set -- $(cat $(snapshotdir $1)/.args 2> /dev/null)
+	IFS=$oldifs
+	if [ $# -ne 3 ]; then
+		echo "ERROR: could not read args file"
+		exit 1
+	fi
+elif [ $# -ne 3 ]; then
+	usage
+fi
+
 backup "$@"
+
+printf "%s\n" "$@" | sudo tee $(snapshotdir $1)/.args > /dev/null
